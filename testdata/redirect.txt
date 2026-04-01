@@ -1,0 +1,5 @@
+# IP-blocked domains
+instagram.com
+twitter.com
+x.com
+facebook.com
