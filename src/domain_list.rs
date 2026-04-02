@@ -7,8 +7,8 @@ pub struct DomainList {
 
 impl DomainList {
     pub fn load(path: &str) -> Result<DomainList, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("cannot read {}: {}", path, e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("cannot read {}: {}", path, e))?;
 
         let domains = content
             .lines()

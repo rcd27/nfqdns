@@ -1,8 +1,8 @@
 use std::net::Ipv4Addr;
 
 use simple_dns::{
-    rdata::{RData, A},
     CLASS, Packet, PacketFlag, Question, ResourceRecord,
+    rdata::{A, RData},
 };
 
 /// Parse a DNS query payload and return the queried domain name.

@@ -24,14 +24,20 @@ impl Config {
                     if i >= args.len() {
                         return Err("--queue-num requires a value".to_string());
                     }
-                    queue_num = args[i].parse().map_err(|_| "invalid queue-num".to_string())?;
+                    queue_num = args[i]
+                        .parse()
+                        .map_err(|_| "invalid queue-num".to_string())?;
                 }
                 "--redirect-ip" => {
                     i += 1;
                     if i >= args.len() {
                         return Err("--redirect-ip requires a value".to_string());
                     }
-                    redirect_ip = Some(args[i].parse().map_err(|_| "invalid redirect-ip".to_string())?);
+                    redirect_ip = Some(
+                        args[i]
+                            .parse()
+                            .map_err(|_| "invalid redirect-ip".to_string())?,
+                    );
                 }
                 "--redirect-list" => {
                     i += 1;
@@ -52,7 +58,9 @@ impl Config {
                     if i >= args.len() {
                         return Err("--stats-interval requires a value".to_string());
                     }
-                    stats_interval = args[i].parse().map_err(|_| "invalid stats-interval".to_string())?;
+                    stats_interval = args[i]
+                        .parse()
+                        .map_err(|_| "invalid stats-interval".to_string())?;
                 }
                 other => {
                     return Err(format!("unknown argument: {}", other));
@@ -62,7 +70,8 @@ impl Config {
         }
 
         let redirect_ip = redirect_ip.ok_or("--redirect-ip is required".to_string())?;
-        let redirect_list_path = redirect_list_path.ok_or("--redirect-list is required".to_string())?;
+        let redirect_list_path =
+            redirect_list_path.ok_or("--redirect-list is required".to_string())?;
 
         Ok(Config {
             queue_num,
@@ -81,9 +90,14 @@ mod tests {
     #[test]
     fn parse_minimal_args() {
         let args: Vec<String> = vec![
-            "--redirect-ip", "192.168.1.50",
-            "--redirect-list", "/etc/nfqdns/tunnel.txt",
-        ].into_iter().map(String::from).collect();
+            "--redirect-ip",
+            "192.168.1.50",
+            "--redirect-list",
+            "/etc/nfqdns/tunnel.txt",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
 
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.redirect_ip, Ipv4Addr::new(192, 168, 1, 50));
@@ -95,12 +109,20 @@ mod tests {
     #[test]
     fn parse_all_args() {
         let args: Vec<String> = vec![
-            "--queue-num", "200",
-            "--redirect-ip", "10.0.0.1",
-            "--redirect-list", "/tmp/tunnel.txt",
-            "--bypass-list", "/tmp/bypass.txt",
-            "--stats-interval", "30",
-        ].into_iter().map(String::from).collect();
+            "--queue-num",
+            "200",
+            "--redirect-ip",
+            "10.0.0.1",
+            "--redirect-list",
+            "/tmp/tunnel.txt",
+            "--bypass-list",
+            "/tmp/bypass.txt",
+            "--stats-interval",
+            "30",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
 
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.queue_num, 200);
@@ -111,9 +133,10 @@ mod tests {
 
     #[test]
     fn missing_required_redirect_ip() {
-        let args: Vec<String> = vec![
-            "--redirect-list", "/tmp/tunnel.txt",
-        ].into_iter().map(String::from).collect();
+        let args: Vec<String> = vec!["--redirect-list", "/tmp/tunnel.txt"]
+            .into_iter()
+            .map(String::from)
+            .collect();
 
         let result = Config::from_args(&args);
         assert!(result.is_err());
@@ -121,9 +144,10 @@ mod tests {
 
     #[test]
     fn missing_required_tunnel_list() {
-        let args: Vec<String> = vec![
-            "--redirect-ip", "1.2.3.4",
-        ].into_iter().map(String::from).collect();
+        let args: Vec<String> = vec!["--redirect-ip", "1.2.3.4"]
+            .into_iter()
+            .map(String::from)
+            .collect();
 
         let result = Config::from_args(&args);
         assert!(result.is_err());

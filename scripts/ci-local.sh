@@ -6,8 +6,8 @@ set -euo pipefail
 echo "=== cargo fmt --check ==="
 cargo fmt --check
 
-echo "=== cargo test --lib ==="
-cargo test --lib
+echo "=== cargo test ==="
+cargo test
 
 echo "=== cargo clippy ==="
 cargo clippy -- -D warnings

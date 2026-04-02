@@ -20,14 +20,20 @@ fn main() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error: {}", e);
-            eprintln!("Usage: nfqdns --redirect-ip IP --redirect-list PATH [--bypass-list PATH] [--queue-num N] [--stats-interval SEC]");
+            eprintln!(
+                "Usage: nfqdns --redirect-ip IP --redirect-list PATH [--bypass-list PATH] [--queue-num N] [--stats-interval SEC]"
+            );
             std::process::exit(1);
         }
     };
 
     let redirect_list = match DomainList::load(&config.redirect_list_path) {
         Ok(list) => {
-            eprintln!("[nfqdns] redirect list: {} domains from {}", list.len(), config.redirect_list_path);
+            eprintln!(
+                "[nfqdns] redirect list: {} domains from {}",
+                list.len(),
+                config.redirect_list_path
+            );
             list
         }
         Err(e) => {
@@ -46,7 +52,7 @@ fn main() {
                 eprintln!("[nfqdns] FATAL: {}", e);
                 std::process::exit(1);
             }
-        }
+        },
         None => DomainList::empty(),
     };
 
@@ -64,7 +70,10 @@ fn main() {
     };
 
     if let Err(e) = queue.bind(config.queue_num) {
-        eprintln!("[nfqdns] FATAL: cannot bind to queue {}: {:?}", config.queue_num, e);
+        eprintln!(
+            "[nfqdns] FATAL: cannot bind to queue {}: {:?}",
+            config.queue_num, e
+        );
         std::process::exit(1);
     }
 
@@ -103,7 +112,10 @@ fn main() {
             let tunnel = STATS_REDIRECT.load(Ordering::Relaxed);
             let bypass = STATS_BYPASS.load(Ordering::Relaxed);
             let pass = STATS_PASS.load(Ordering::Relaxed);
-            eprintln!("[nfqdns] stats: total={} redirect={} bypass={} pass={}", total, tunnel, bypass, pass);
+            eprintln!(
+                "[nfqdns] stats: total={} redirect={} bypass={} pass={}",
+                total, tunnel, bypass, pass
+            );
             last_stats = Instant::now();
         }
     }
