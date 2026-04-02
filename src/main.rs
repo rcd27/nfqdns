@@ -6,13 +6,13 @@ mod packet;
 use config::Config;
 use domain_list::DomainList;
 use nfq::{Queue, Verdict};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-static STATS_TOTAL: AtomicU64 = AtomicU64::new(0);
-static STATS_REDIRECT: AtomicU64 = AtomicU64::new(0);
-static STATS_BYPASS: AtomicU64 = AtomicU64::new(0);
-static STATS_PASS: AtomicU64 = AtomicU64::new(0);
+static STATS_TOTAL: AtomicUsize = AtomicUsize::new(0);
+static STATS_REDIRECT: AtomicUsize = AtomicUsize::new(0);
+static STATS_BYPASS: AtomicUsize = AtomicUsize::new(0);
+static STATS_PASS: AtomicUsize = AtomicUsize::new(0);
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
