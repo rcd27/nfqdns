@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/rcd27/nfqdns/compare/v0.1.1...v0.1.2) (2026-04-02)
+
+
+### Bug Fixes
+
+* **build:** AtomicU64 -&gt; AtomicUsize для поддержки mips ([67988ca](https://github.com/rcd27/nfqdns/commit/67988cae2fca4224708aced7361715b409b27cb7))
+
 ## [0.1.1](https://github.com/rcd27/nfqdns/compare/v0.1.0...v0.1.1) (2026-04-02)
 
 
