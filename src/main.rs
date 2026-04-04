@@ -2,6 +2,7 @@ mod config;
 mod dns;
 mod domain_list;
 mod packet;
+mod protocol;
 
 use config::Config;
 use domain_list::DomainList;
@@ -14,70 +15,70 @@ static STATS_REDIRECT: AtomicUsize = AtomicUsize::new(0);
 static STATS_BYPASS: AtomicUsize = AtomicUsize::new(0);
 static STATS_PASS: AtomicUsize = AtomicUsize::new(0);
 
+const STATS_INTERVAL_SECS: u64 = 60;
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let config = match Config::from_args(&args) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Error: {}", e);
-            eprintln!(
-                "Usage: nfqdns --redirect-ip IP --redirect-list PATH [--bypass-list PATH] [--queue-num N] [--stats-interval SEC]"
-            );
+            protocol::emit(&protocol::state_fatal(&format!("invalid args: {}", e)));
             std::process::exit(1);
         }
     };
 
     let redirect_list = match DomainList::load(&config.redirect_list_path) {
         Ok(list) => {
-            eprintln!(
-                "[nfqdns] redirect list: {} domains from {}",
-                list.len(),
-                config.redirect_list_path
-            );
+            if list.len() == 0 {
+                protocol::emit(&protocol::state_degraded(
+                    "redirect list empty, working as passthrough",
+                ));
+            }
             list
         }
         Err(e) => {
-            eprintln!("[nfqdns] FATAL: {}", e);
+            protocol::emit(&protocol::state_fatal(&format!(
+                "cannot load redirect list: {}",
+                e
+            )));
             std::process::exit(1);
         }
     };
 
     let bypass_list = match &config.bypass_list_path {
         Some(path) => match DomainList::load(path) {
-            Ok(list) => {
-                eprintln!("[nfqdns] bypass list: {} domains from {}", list.len(), path);
-                list
-            }
+            Ok(list) => list,
             Err(e) => {
-                eprintln!("[nfqdns] FATAL: {}", e);
+                protocol::emit(&protocol::state_fatal(&format!(
+                    "cannot load bypass list: {}",
+                    e
+                )));
                 std::process::exit(1);
             }
         },
         None => DomainList::empty(),
     };
 
-    eprintln!("[nfqdns] redirect-ip: {}", config.redirect_ip);
-    eprintln!("[nfqdns] queue-num: {}", config.queue_num);
-    eprintln!("[nfqdns] binding to NFQUEUE {}...", config.queue_num);
-
     let mut queue = match Queue::open() {
         Ok(q) => q,
         Err(e) => {
-            eprintln!("[nfqdns] FATAL: cannot open NFQUEUE: {:?}", e);
-            eprintln!("[nfqdns] hint: run as root, ensure kmod-nfnetlink-queue is loaded");
+            protocol::emit(&protocol::state_fatal(&format!(
+                "cannot open NFQUEUE: {:?}",
+                e
+            )));
             std::process::exit(1);
         }
     };
 
     if let Err(e) = queue.bind(config.queue_num) {
-        eprintln!(
-            "[nfqdns] FATAL: cannot bind to queue {}: {:?}",
+        protocol::emit(&protocol::state_fatal(&format!(
+            "cannot bind NFQUEUE {}: {:?}",
             config.queue_num, e
-        );
+        )));
         std::process::exit(1);
     }
 
-    eprintln!("[nfqdns] listening on NFQUEUE {}", config.queue_num);
+    protocol::emit(&protocol::state_alive(env!("CARGO_PKG_VERSION")));
 
     let mut last_stats = Instant::now();
 
@@ -85,7 +86,7 @@ fn main() {
         let mut msg = match queue.recv() {
             Ok(msg) => msg,
             Err(e) => {
-                eprintln!("[nfqdns] recv error: {:?}", e);
+                eprintln!("recv error: {:?}", e);
                 continue;
             }
         };
@@ -107,15 +108,12 @@ fn main() {
 
         queue.verdict(msg).ok();
 
-        if config.stats_interval > 0 && last_stats.elapsed().as_secs() >= config.stats_interval {
+        if last_stats.elapsed().as_secs() >= STATS_INTERVAL_SECS {
             let total = STATS_TOTAL.load(Ordering::Relaxed);
-            let tunnel = STATS_REDIRECT.load(Ordering::Relaxed);
-            let bypass = STATS_BYPASS.load(Ordering::Relaxed);
-            let pass = STATS_PASS.load(Ordering::Relaxed);
-            eprintln!(
-                "[nfqdns] stats: total={} redirect={} bypass={} pass={}",
-                total, tunnel, bypass, pass
-            );
+            let redirected = STATS_REDIRECT.load(Ordering::Relaxed);
+            let bypassed = STATS_BYPASS.load(Ordering::Relaxed);
+            let passed = STATS_PASS.load(Ordering::Relaxed);
+            protocol::emit(&protocol::data_gauge(total, redirected, bypassed, passed));
             last_stats = Instant::now();
         }
     }
@@ -150,13 +148,11 @@ fn process_packet(
         }
     };
 
-    // Bypass list first (always pass through)
     if bypass_list.contains(&domain) {
         STATS_BYPASS.fetch_add(1, Ordering::Relaxed);
         return PacketVerdict::Accept;
     }
 
-    // Redirect list
     if redirect_list.contains(&domain) {
         STATS_REDIRECT.fetch_add(1, Ordering::Relaxed);
 
@@ -176,11 +172,13 @@ fn process_packet(
             }
         };
 
-        eprintln!("[nfqdns] REDIRECT: {} -> {}", domain, config.redirect_ip);
+        protocol::emit(&protocol::data_signal_redirect(
+            &domain,
+            &config.redirect_ip.to_string(),
+        ));
         return PacketVerdict::SpoofedResponse(spoofed);
     }
 
-    // Unknown — pass through
     STATS_PASS.fetch_add(1, Ordering::Relaxed);
     PacketVerdict::Accept
 }

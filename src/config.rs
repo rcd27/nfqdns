@@ -5,7 +5,6 @@ pub struct Config {
     pub redirect_ip: Ipv4Addr,
     pub redirect_list_path: String,
     pub bypass_list_path: Option<String>,
-    pub stats_interval: u64,
 }
 
 impl Config {
@@ -14,7 +13,6 @@ impl Config {
         let mut redirect_ip: Option<Ipv4Addr> = None;
         let mut redirect_list_path: Option<String> = None;
         let mut bypass_list_path: Option<String> = None;
-        let mut stats_interval: u64 = 60;
 
         let mut i = 0;
         while i < args.len() {
@@ -53,15 +51,6 @@ impl Config {
                     }
                     bypass_list_path = Some(args[i].clone());
                 }
-                "--stats-interval" => {
-                    i += 1;
-                    if i >= args.len() {
-                        return Err("--stats-interval requires a value".to_string());
-                    }
-                    stats_interval = args[i]
-                        .parse()
-                        .map_err(|_| "invalid stats-interval".to_string())?;
-                }
                 other => {
                     return Err(format!("unknown argument: {}", other));
                 }
@@ -78,7 +67,6 @@ impl Config {
             redirect_ip,
             redirect_list_path,
             bypass_list_path,
-            stats_interval,
         })
     }
 }
@@ -117,8 +105,6 @@ mod tests {
             "/tmp/tunnel.txt",
             "--bypass-list",
             "/tmp/bypass.txt",
-            "--stats-interval",
-            "30",
         ]
         .into_iter()
         .map(String::from)
@@ -128,7 +114,6 @@ mod tests {
         assert_eq!(config.queue_num, 200);
         assert_eq!(config.redirect_ip, Ipv4Addr::new(10, 0, 0, 1));
         assert_eq!(config.bypass_list_path.unwrap(), "/tmp/bypass.txt");
-        assert_eq!(config.stats_interval, 30);
     }
 
     #[test]
