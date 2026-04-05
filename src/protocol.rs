@@ -37,6 +37,7 @@ pub struct SignalFields {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum RedirectAction {
     Redirect,
     Tunnel,
