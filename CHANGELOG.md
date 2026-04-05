@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.3](https://github.com/rcd27/nfqdns/compare/v0.1.2...v0.1.3) (2026-04-05)
+
+
+### Features
+
+* **protocol:** Component Protocol for stdout ([41fd727](https://github.com/rcd27/nfqdns/commit/41fd72789171e8ad83e42e426660c5d98e3b211f))
+
+
+### Bug Fixes
+
+* **ddd:** more ADT ftw ([a5f63e7](https://github.com/rcd27/nfqdns/commit/a5f63e7cf217fb571b004ea642e6d19107910558))
+* **lint:** cargo fmt for all targets ([cab45a5](https://github.com/rcd27/nfqdns/commit/cab45a5abe35f9189aa6863cd89b887f9645ce8b))
+* **protocol:** missing files ([b094a41](https://github.com/rcd27/nfqdns/commit/b094a410ee6b4fb9c06ddaad4fc8a255076821f8))
+* **types:** типизированные ошибки + паника + правки по TODO ([b2d837b](https://github.com/rcd27/nfqdns/commit/b2d837bbc90f0a49e9530d00755d8bbf9305651c))
+
 ## [0.1.2](https://github.com/rcd27/nfqdns/compare/v0.1.1...v0.1.2) (2026-04-02)
 
 
