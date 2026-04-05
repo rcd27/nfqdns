@@ -71,7 +71,13 @@ pub fn state_degraded(reason: &str) -> Payload {
     })
 }
 
-pub fn data_gauge(total: u64, redirected: u64, tunneled: u64, bypassed: u64, passed: u64) -> Payload {
+pub fn data_gauge(
+    total: u64,
+    redirected: u64,
+    tunneled: u64,
+    bypassed: u64,
+    passed: u64,
+) -> Payload {
     Payload::Data(DataPayload::Gauge(GaugePayload {
         total,
         redirected,

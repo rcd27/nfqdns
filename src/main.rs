@@ -65,11 +65,7 @@ fn spoof_dns_response(
     packet::build_spoofed_packet(raw_packet, &dns_response)
 }
 
-fn process_packet(
-    raw_packet: &[u8],
-    lists: &DomainLists,
-    config: &Config,
-) -> PacketVerdict {
+fn process_packet(raw_packet: &[u8], lists: &DomainLists, config: &Config) -> PacketVerdict {
     let headers = match etherparse::PacketHeaders::from_ip_slice(raw_packet) {
         Ok(h) => h,
         Err(_) => {
@@ -110,21 +106,19 @@ fn process_packet(
         TrafficCategory::Tunnel => {
             STATS_TUNNEL.fetch_add(1, Ordering::Relaxed);
             match config.tunnel_ip {
-                Some(tunnel_ip) => {
-                    match spoof_dns_response(dns_payload, raw_packet, tunnel_ip) {
-                        Some(spoofed) => {
-                            protocol::emit(&protocol::data_signal_redirect(
-                                &domain,
-                                RedirectAction::Tunnel,
-                            ));
-                            PacketVerdict::SpoofedResponse(spoofed)
-                        }
-                        None => {
-                            STATS_PASS.fetch_add(1, Ordering::Relaxed);
-                            PacketVerdict::Accept
-                        }
+                Some(tunnel_ip) => match spoof_dns_response(dns_payload, raw_packet, tunnel_ip) {
+                    Some(spoofed) => {
+                        protocol::emit(&protocol::data_signal_redirect(
+                            &domain,
+                            RedirectAction::Tunnel,
+                        ));
+                        PacketVerdict::SpoofedResponse(spoofed)
                     }
-                }
+                    None => {
+                        STATS_PASS.fetch_add(1, Ordering::Relaxed);
+                        PacketVerdict::Accept
+                    }
+                },
                 None => {
                     // tunnel_ip not configured — pass through
                     STATS_PASS.fetch_add(1, Ordering::Relaxed);
