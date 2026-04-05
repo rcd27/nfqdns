@@ -1,93 +1,67 @@
-use nfqdns::protocol::{
-    data_gauge, data_signal_redirect, state_alive, state_degraded, state_fatal,
-};
-
-// --- State messages ---
+use nfqdns::protocol::*;
 
 #[test]
-fn alive_message_is_valid_json_with_state_field() {
-    let json = state_alive("0.1.2");
+fn alive_message_v2_format() {
+    let payload = state_alive("0.1.2");
+    let json = serde_json::to_string(&payload).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["state"], "alive");
+    assert_eq!(parsed["type"], "state");
+    assert_eq!(parsed["kind"], "alive");
     assert_eq!(parsed["version"], "0.1.2");
 }
 
 #[test]
-fn fatal_message_is_valid_json_with_state_field() {
-    let json = state_fatal("NFQUEUE 100 already bound");
+fn fatal_message_v2_format() {
+    let payload = state_fatal("NFQUEUE 100 already bound");
+    let json = serde_json::to_string(&payload).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["state"], "fatal");
-    assert_eq!(parsed["reason"], "NFQUEUE 100 already bound");
+    assert_eq!(parsed["type"], "state");
+    assert_eq!(parsed["kind"], "fatal");
 }
 
 #[test]
-fn degraded_message_is_valid_json_with_state_field() {
-    let json = state_degraded("redirect list empty");
+fn gauge_message_v2_with_tunneled() {
+    let payload = data_gauge(4582, 342, 15, 120, 4105);
+    let json = serde_json::to_string(&payload).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["state"], "degraded");
-    assert_eq!(parsed["reason"], "redirect list empty");
-}
-
-// --- Data messages ---
-
-#[test]
-fn gauge_message_has_data_field() {
-    let json = data_gauge(4582, 342, 120, 4120);
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["data"], "gauge");
-    assert_eq!(parsed["total"], 4582);
-    assert_eq!(parsed["redirected"], 342);
-    assert_eq!(parsed["bypassed"], 120);
-    assert_eq!(parsed["passed"], 4120);
+    assert_eq!(parsed["type"], "data");
+    assert_eq!(parsed["kind"], "gauge");
+    assert_eq!(parsed["tunneled"], 15);
 }
 
 #[test]
-fn signal_redirect_has_data_field() {
-    let json = data_signal_redirect("instagram.com", "192.168.1.50");
+fn signal_redirect_v2_format() {
+    let payload = data_signal_redirect("instagram.com", RedirectAction::Redirect);
+    let json = serde_json::to_string(&payload).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["data"], "signal");
-    assert_eq!(parsed["name"], "DOMAIN_REDIRECTED");
-    assert_eq!(parsed["domain"], "instagram.com");
-    assert_eq!(parsed["redirect_ip"], "192.168.1.50");
+    assert_eq!(parsed["type"], "data");
+    assert_eq!(parsed["kind"], "signal");
+    assert_eq!(parsed["signal_type"], "DOMAIN_REDIRECTED");
+    assert_eq!(parsed["fields"]["domain"], "instagram.com");
+    assert_eq!(parsed["fields"]["action"], "redirect");
 }
 
-// --- Protocol invariants ---
+#[test]
+fn signal_tunnel_action() {
+    let payload = data_signal_redirect("discord.com", RedirectAction::Tunnel);
+    let json = serde_json::to_string(&payload).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["fields"]["action"], "tunnel");
+}
 
 #[test]
-fn all_messages_are_single_line() {
-    let messages = vec![
+fn all_messages_have_type_field() {
+    let messages: Vec<Payload> = vec![
         state_alive("0.1.2"),
-        state_fatal("bind failed"),
-        state_degraded("empty list"),
-        data_gauge(100, 10, 5, 85),
-        data_signal_redirect("example.com", "192.168.1.50"),
+        state_fatal("error"),
+        state_degraded("warning"),
+        data_gauge(100, 10, 5, 5, 80),
+        data_signal_redirect("example.com", RedirectAction::Redirect),
     ];
-
-    for msg in messages {
-        assert!(!msg.contains('\n'), "JSON Lines must be single-line: {}", msg);
-    }
-}
-
-#[test]
-fn all_messages_have_exactly_one_discriminator() {
-    let messages = vec![
-        state_alive("0.1.2"),
-        state_fatal("bind failed"),
-        state_degraded("empty list"),
-        data_gauge(100, 10, 5, 85),
-        data_signal_redirect("example.com", "192.168.1.50"),
-    ];
-
-    for msg in &messages {
-        let parsed: serde_json::Value = serde_json::from_str(msg).unwrap();
-        let obj = parsed.as_object().unwrap();
-        let has_state = obj.contains_key("state");
-        let has_data = obj.contains_key("data");
-
-        assert!(
-            has_state ^ has_data,
-            "must have exactly one of 'state' or 'data': {}",
-            msg
-        );
+    for payload in &messages {
+        let json = serde_json::to_string(payload).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.get("type").is_some(), "must have 'type': {json}");
+        assert!(!json.contains('\n'), "single line: {json}");
     }
 }

@@ -1,14 +1,19 @@
 use std::collections::HashSet;
 use std::fs;
+use std::path::Path;
+
+use crate::error::NfqdnsError;
 
 pub struct DomainList {
     domains: HashSet<String>,
 }
 
 impl DomainList {
-    pub fn load(path: &str) -> Result<DomainList, String> {
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("cannot read {}: {}", path, e))?;
+    pub fn load(path: &Path) -> Result<DomainList, NfqdnsError> {
+        let content = fs::read_to_string(path).map_err(|e| NfqdnsError::DomainList {
+            path: path.display().to_string(),
+            source: e,
+        })?;
 
         let domains = content
             .lines()
@@ -59,13 +64,13 @@ mod tests {
 
     #[test]
     fn load_tunnel_list() {
-        let list = DomainList::load("testdata/redirect.txt").unwrap();
+        let list = DomainList::load(Path::new("testdata/redirect.txt")).unwrap();
         assert_eq!(list.len(), 4);
     }
 
     #[test]
     fn exact_match() {
-        let list = DomainList::load("testdata/redirect.txt").unwrap();
+        let list = DomainList::load(Path::new("testdata/redirect.txt")).unwrap();
         assert!(list.contains("instagram.com"));
         assert!(list.contains("twitter.com"));
         assert!(!list.contains("youtube.com"));
@@ -73,7 +78,7 @@ mod tests {
 
     #[test]
     fn suffix_match() {
-        let list = DomainList::load("testdata/redirect.txt").unwrap();
+        let list = DomainList::load(Path::new("testdata/redirect.txt")).unwrap();
         assert!(list.contains("cdn.instagram.com"));
         assert!(list.contains("edge-chat.instagram.com"));
         assert!(!list.contains("scontent-ams2-1.cdninstagram.com"));
@@ -81,14 +86,14 @@ mod tests {
 
     #[test]
     fn case_insensitive() {
-        let list = DomainList::load("testdata/redirect.txt").unwrap();
+        let list = DomainList::load(Path::new("testdata/redirect.txt")).unwrap();
         assert!(list.contains("Instagram.COM"));
         assert!(list.contains("CDN.INSTAGRAM.COM"));
     }
 
     #[test]
     fn comments_and_blanks_ignored() {
-        let list = DomainList::load("testdata/redirect.txt").unwrap();
+        let list = DomainList::load(Path::new("testdata/redirect.txt")).unwrap();
         assert_eq!(list.len(), 4);
     }
 
@@ -101,7 +106,7 @@ mod tests {
 
     #[test]
     fn load_nonexistent_file() {
-        let result = DomainList::load("/nonexistent/path.txt");
+        let result = DomainList::load(Path::new("/nonexistent/path.txt"));
         assert!(result.is_err());
     }
 }
