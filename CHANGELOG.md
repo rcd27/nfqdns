@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/rcd27/nfqdns/compare/v0.1.3...v0.2.0) (2026-04-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** rewrite from NFQUEUE to AF_PACKET
+
+### Features
+
+* **core:** rewrite from NFQUEUE to AF_PACKET ([8f632c9](https://github.com/rcd27/nfqdns/commit/8f632c9b8b2e89bfe4a94c8e9127544d88003283))
+* **rawsocks:** add RawSocket handling ([c1b6ba0](https://github.com/rcd27/nfqdns/commit/c1b6ba00ac6c1972f5eae265a00c1fff258222a2))
+
 ## [0.1.3](https://github.com/rcd27/nfqdns/compare/v0.1.2...v0.1.3) (2026-04-05)
 
 
