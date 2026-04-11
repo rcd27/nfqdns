@@ -66,14 +66,13 @@ fn process_packet(
     match category {
         TrafficCategory::Redirect => {
             STATS_REDIRECT.fetch_add(1, Ordering::Relaxed);
-            let dns_response = dns::craft_response(&info.dns_payload, config.redirect_ip)?;
+            let dns_response = dns::craft_response(&info.dns_payload, config.spoof_ip)?;
             protocol::emit(&protocol::data_signal_redirect(&domain, RedirectAction::Redirect));
             Some(packet::build_spoofed_response(&info, &dns_response))
         }
         TrafficCategory::Tunnel => {
             STATS_TUNNEL.fetch_add(1, Ordering::Relaxed);
-            let tunnel_ip = config.tunnel_ip?;
-            let dns_response = dns::craft_response(&info.dns_payload, tunnel_ip)?;
+            let dns_response = dns::craft_response(&info.dns_payload, config.spoof_ip)?;
             protocol::emit(&protocol::data_signal_redirect(&domain, RedirectAction::Tunnel));
             Some(packet::build_spoofed_response(&info, &dns_response))
         }
@@ -103,7 +102,13 @@ fn load_list(path: &Path, name: &str) -> DomainList {
 
 fn main() {
     let args = Args::parse();
-    let config = Config::from(args);
+    let config = match Config::from_args(args) {
+        Ok(c) => c,
+        Err(e) => {
+            protocol::emit(&protocol::state_fatal(&e));
+            std::process::exit(1);
+        }
+    };
 
     if config.ifaces.is_empty() {
         protocol::emit(&protocol::state_fatal("no interfaces specified (--ifaces eth0,eth1)"));
@@ -133,9 +138,8 @@ fn main() {
         bypass: bypass_list,
     };
 
-    // Открываем raw socket на первом интерфейсе.
+    // AF_PACKET на первом bridge порту.
     // На L2 bridge оба порта видят один и тот же трафик — достаточно слушать один.
-    // Ответ инжектим на тот же порт (обратно к клиенту).
     let iface = &config.ifaces[0];
     let sock = match rawsock::RawSocket::bind(iface) {
         Ok(s) => s,
@@ -162,30 +166,12 @@ fn main() {
             }
         };
 
-        // Debug: логируем первые 20 пакетов
-        {
-            static DEBUG_COUNT: AtomicUsize = AtomicUsize::new(0);
-            let count = DEBUG_COUNT.fetch_add(1, Ordering::Relaxed);
-            if count < 20 {
-                let ethertype = if len >= 14 { u16::from_be_bytes([buf[12], buf[13]]) } else { 0 };
-                let mut extra = String::new();
-                if ethertype == 0x0800 && len > 14 + 23 {
-                    let ip_proto = buf[14 + 9];
-                    if ip_proto == 17 { // UDP
-                        let dst_port = u16::from_be_bytes([buf[14 + 22], buf[14 + 23]]);
-                        extra = format!(" UDP dst_port={}", dst_port);
-                    }
-                }
-                eprintln!("DEBUG[{}]: len={} pkttype={} etype=0x{:04x}{}", count, len, addr.sll_pkttype, ethertype, extra);
-            }
-        }
-
-        // sll_pkttype: PACKET_OUTGOING (4) — наши собственные пакеты, пропускаем
+        // PACKET_OUTGOING (4) — наши собственные пакеты, пропускаем
         if addr.sll_pkttype == 4 {
             continue;
         }
 
-        // ETH_P_ALL: Ethernet frame. EtherType = IPv4 (0x0800).
+        // ETH_P_ALL: Ethernet frame. Фильтруем IPv4 (0x0800).
         if len < 14 {
             continue;
         }
@@ -198,14 +184,14 @@ fn main() {
         let raw_ip = &buf[14..len];
 
         if let Some(spoofed_ip) = process_packet(raw_ip, &lists, &config) {
-            // Собираем Ethernet frame: dst=client MAC, src=original dst MAC, ethertype=IPv4
-            let client_mac = &buf[6..12]; // src MAC из оригинального frame
-            let our_mac = &buf[0..6]; // dst MAC из оригинального frame (MAC "роутера"/DNS)
+            // Ethernet frame: dst=client MAC, src=original dst MAC, ethertype=IPv4
+            let client_mac = &buf[6..12];
+            let dns_server_mac = &buf[0..6];
 
             let mut frame = Vec::with_capacity(14 + spoofed_ip.len());
-            frame.extend_from_slice(client_mac); // dst = клиент
-            frame.extend_from_slice(our_mac); // src = "DNS сервер"
-            frame.extend_from_slice(&[0x08, 0x00]); // EtherType = IPv4
+            frame.extend_from_slice(client_mac);
+            frame.extend_from_slice(dns_server_mac);
+            frame.extend_from_slice(&[0x08, 0x00]);
             frame.extend_from_slice(&spoofed_ip);
 
             let mut dst_mac = [0u8; 6];
