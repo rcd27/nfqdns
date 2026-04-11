@@ -150,21 +150,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
-name = "nfq"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9c8f4c88952507d9df9400a6a2e48640fb460e21dcb2b4716eb3ff156d6db9e"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "nfqdns"
-version = "0.1.3"
+version = "0.3.0"
 dependencies = [
  "clap",
  "etherparse",
- "nfq",
+ "libc",
  "serde",
  "serde_json",
  "simple-dns",

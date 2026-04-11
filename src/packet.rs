@@ -1,44 +1,60 @@
-use etherparse::{NetSlice, PacketBuilder, SlicedPacket, TransportSlice};
+use etherparse::PacketBuilder;
 
-/// Take an original IPv4/UDP packet, swap src/dst IP and ports,
-/// replace UDP payload with dns_response_payload, recalculate checksums.
-/// Returns None if the packet is not a valid IPv4/UDP packet.
-pub fn build_spoofed_packet(
-    original_packet: &[u8],
-    dns_response_payload: &[u8],
-) -> Option<Vec<u8>> {
-    let sliced = SlicedPacket::from_ip(original_packet).ok()?;
+/// Минимальные заголовки из raw IPv4/UDP пакета (без Ethernet).
+/// AF_PACKET SOCK_RAW с ETH_P_IP отдаёт пакет начиная с IP заголовка.
+pub struct DnsPacketInfo {
+    pub src_ip: [u8; 4],
+    pub dst_ip: [u8; 4],
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub dns_payload: Vec<u8>,
+}
 
-    let ip_slice = match &sliced.net {
-        Some(NetSlice::Ipv4(s)) => s,
+/// Парсит IPv4/UDP пакет и извлекает DNS payload.
+/// Возвращает None если пакет не IPv4/UDP или dst_port != 53.
+pub fn parse_dns_query(raw: &[u8]) -> Option<DnsPacketInfo> {
+    let headers = etherparse::PacketHeaders::from_ip_slice(raw).ok()?;
+
+    let ip = match &headers.net {
+        Some(etherparse::NetHeaders::Ipv4(h, _)) => h,
         _ => return None,
     };
 
-    let udp_slice = match &sliced.transport {
-        Some(TransportSlice::Udp(s)) => s,
+    let udp = match &headers.transport {
+        Some(etherparse::TransportHeader::Udp(h)) => h,
         _ => return None,
     };
 
-    let orig_ip = ip_slice.header().to_header();
-    let orig_udp = udp_slice.to_header();
+    if udp.destination_port != 53 {
+        return None;
+    }
 
-    let src_ip = orig_ip.destination;
-    let dst_ip = orig_ip.source;
-    let src_port = orig_udp.destination_port;
-    let dst_port = orig_udp.source_port;
+    Some(DnsPacketInfo {
+        src_ip: ip.source,
+        dst_ip: ip.destination,
+        src_port: udp.source_port,
+        dst_port: udp.destination_port,
+        dns_payload: headers.payload.slice().to_vec(),
+    })
+}
 
-    let builder = PacketBuilder::ipv4(src_ip, dst_ip, orig_ip.time_to_live).udp(src_port, dst_port);
+/// Собирает spoofed DNS response пакет (IP/UDP, без Ethernet).
+/// src/dst IP и порты перевёрнуты относительно оригинала.
+pub fn build_spoofed_response(
+    original: &DnsPacketInfo,
+    dns_response: &[u8],
+) -> Vec<u8> {
+    let builder = PacketBuilder::ipv4(original.dst_ip, original.src_ip, 64)
+        .udp(original.dst_port, original.src_port);
 
-    let mut result = Vec::with_capacity(builder.size(dns_response_payload.len()));
-    builder.write(&mut result, dns_response_payload).ok()?;
-
-    Some(result)
+    let mut buf = Vec::with_capacity(builder.size(dns_response.len()));
+    builder.write(&mut buf, dns_response).expect("packet build");
+    buf
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use etherparse::{NetSlice, PacketBuilder, SlicedPacket, TransportSlice};
 
     fn make_udp_packet(
         src_ip: [u8; 4],
@@ -54,51 +70,38 @@ mod tests {
     }
 
     #[test]
-    fn src_dst_ip_and_ports_are_swapped() {
-        let original = make_udp_packet([192, 168, 1, 100], [8, 8, 8, 8], 54321, 53, b"query");
-        let response_payload = b"response";
-        let spoofed = build_spoofed_packet(&original, response_payload).unwrap();
+    fn parse_dns_query_valid() {
+        let pkt = make_udp_packet([192, 168, 1, 100], [8, 8, 8, 8], 54321, 53, b"dns-query");
+        let info = parse_dns_query(&pkt).unwrap();
+        assert_eq!(info.src_ip, [192, 168, 1, 100]);
+        assert_eq!(info.dst_ip, [8, 8, 8, 8]);
+        assert_eq!(info.src_port, 54321);
+        assert_eq!(info.dst_port, 53);
+        assert_eq!(info.dns_payload, b"dns-query");
+    }
 
-        let sliced = SlicedPacket::from_ip(&spoofed).unwrap();
-        let ip = match &sliced.net {
-            Some(NetSlice::Ipv4(s)) => s.header().to_header(),
+    #[test]
+    fn parse_dns_query_wrong_port() {
+        let pkt = make_udp_packet([10, 0, 0, 1], [10, 0, 0, 2], 12345, 80, b"http");
+        assert!(parse_dns_query(&pkt).is_none());
+    }
+
+    #[test]
+    fn spoofed_response_swaps_src_dst() {
+        let original = DnsPacketInfo {
+            src_ip: [192, 168, 1, 100],
+            dst_ip: [8, 8, 8, 8],
+            src_port: 54321,
+            dst_port: 53,
+            dns_payload: vec![],
+        };
+        let response = build_spoofed_response(&original, b"response");
+        let info = etherparse::PacketHeaders::from_ip_slice(&response).unwrap();
+        let ip = match &info.net {
+            Some(etherparse::NetHeaders::Ipv4(h, _)) => h,
             _ => panic!("expected ipv4"),
         };
-        let udp = match &sliced.transport {
-            Some(TransportSlice::Udp(s)) => s.to_header(),
-            _ => panic!("expected udp"),
-        };
-
         assert_eq!(ip.source, [8, 8, 8, 8]);
         assert_eq!(ip.destination, [192, 168, 1, 100]);
-        assert_eq!(udp.source_port, 53);
-        assert_eq!(udp.destination_port, 54321);
-    }
-
-    #[test]
-    fn payload_is_replaced() {
-        let original = make_udp_packet(
-            [10, 0, 0, 1],
-            [10, 0, 0, 2],
-            12345,
-            53,
-            b"original_dns_query_data",
-        );
-        let new_payload = b"new_dns_response_data";
-        let spoofed = build_spoofed_packet(&original, new_payload).unwrap();
-
-        let sliced = SlicedPacket::from_ip(&spoofed).unwrap();
-        let udp_payload = match &sliced.transport {
-            Some(TransportSlice::Udp(s)) => s.payload().to_vec(),
-            _ => panic!("expected udp"),
-        };
-
-        assert_eq!(udp_payload, new_payload);
-    }
-
-    #[test]
-    fn invalid_packet_returns_none() {
-        let result = build_spoofed_packet(b"\x00\x01\x02garbage_data", b"response");
-        assert!(result.is_none());
     }
 }

@@ -4,14 +4,13 @@ mod domain_list;
 mod error;
 mod packet;
 mod protocol;
+mod rawsock;
 
-use std::net::Ipv4Addr;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use clap::Parser;
-use nfq::{Queue, Verdict};
 
 use config::{Args, Config};
 use domain_list::DomainList;
@@ -24,6 +23,7 @@ static STATS_BYPASS: AtomicUsize = AtomicUsize::new(0);
 static STATS_PASS: AtomicUsize = AtomicUsize::new(0);
 
 const STATS_INTERVAL_SECS: u64 = 60;
+const BUF_SIZE: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrafficCategory {
@@ -51,88 +51,39 @@ fn classify_domain(domain: &str, lists: &DomainLists) -> TrafficCategory {
     }
 }
 
-enum PacketVerdict {
-    Accept,
-    SpoofedResponse(Vec<u8>),
-}
-
-fn spoof_dns_response(
-    dns_payload: &[u8],
-    raw_packet: &[u8],
-    target_ip: Ipv4Addr,
+/// Обрабатывает пойманный IP пакет. Возвращает spoofed response если домен в списке.
+fn process_packet(
+    raw_ip: &[u8],
+    lists: &DomainLists,
+    config: &Config,
 ) -> Option<Vec<u8>> {
-    let dns_response = dns::craft_response(dns_payload, target_ip)?;
-    packet::build_spoofed_packet(raw_packet, &dns_response)
-}
-
-fn process_packet(raw_packet: &[u8], lists: &DomainLists, config: &Config) -> PacketVerdict {
-    let headers = match etherparse::PacketHeaders::from_ip_slice(raw_packet) {
-        Ok(h) => h,
-        Err(_) => {
-            STATS_PASS.fetch_add(1, Ordering::Relaxed);
-            return PacketVerdict::Accept;
-        }
-    };
-
-    let dns_payload = headers.payload.slice();
-
-    let domain = match dns::extract_domain(dns_payload) {
-        Some(d) => d,
-        None => {
-            STATS_PASS.fetch_add(1, Ordering::Relaxed);
-            return PacketVerdict::Accept;
-        }
-    };
-
+    let info = packet::parse_dns_query(raw_ip)?;
+    let domain = dns::extract_domain(&info.dns_payload)?;
     let category = classify_domain(&domain, lists);
+
+    STATS_TOTAL.fetch_add(1, Ordering::Relaxed);
 
     match category {
         TrafficCategory::Redirect => {
             STATS_REDIRECT.fetch_add(1, Ordering::Relaxed);
-            match spoof_dns_response(dns_payload, raw_packet, config.redirect_ip) {
-                Some(spoofed) => {
-                    protocol::emit(&protocol::data_signal_redirect(
-                        &domain,
-                        RedirectAction::Redirect,
-                    ));
-                    PacketVerdict::SpoofedResponse(spoofed)
-                }
-                None => {
-                    STATS_PASS.fetch_add(1, Ordering::Relaxed);
-                    PacketVerdict::Accept
-                }
-            }
+            let dns_response = dns::craft_response(&info.dns_payload, config.redirect_ip)?;
+            protocol::emit(&protocol::data_signal_redirect(&domain, RedirectAction::Redirect));
+            Some(packet::build_spoofed_response(&info, &dns_response))
         }
         TrafficCategory::Tunnel => {
             STATS_TUNNEL.fetch_add(1, Ordering::Relaxed);
-            match config.tunnel_ip {
-                Some(tunnel_ip) => match spoof_dns_response(dns_payload, raw_packet, tunnel_ip) {
-                    Some(spoofed) => {
-                        protocol::emit(&protocol::data_signal_redirect(
-                            &domain,
-                            RedirectAction::Tunnel,
-                        ));
-                        PacketVerdict::SpoofedResponse(spoofed)
-                    }
-                    None => {
-                        STATS_PASS.fetch_add(1, Ordering::Relaxed);
-                        PacketVerdict::Accept
-                    }
-                },
-                None => {
-                    // tunnel_ip not configured — pass through
-                    STATS_PASS.fetch_add(1, Ordering::Relaxed);
-                    PacketVerdict::Accept
-                }
-            }
+            let tunnel_ip = config.tunnel_ip?;
+            let dns_response = dns::craft_response(&info.dns_payload, tunnel_ip)?;
+            protocol::emit(&protocol::data_signal_redirect(&domain, RedirectAction::Tunnel));
+            Some(packet::build_spoofed_response(&info, &dns_response))
         }
         TrafficCategory::Bypass => {
             STATS_BYPASS.fetch_add(1, Ordering::Relaxed);
-            PacketVerdict::Accept
+            None
         }
         TrafficCategory::Pass => {
             STATS_PASS.fetch_add(1, Ordering::Relaxed);
-            PacketVerdict::Accept
+            None
         }
     }
 }
@@ -153,6 +104,11 @@ fn load_list(path: &Path, name: &str) -> DomainList {
 fn main() {
     let args = Args::parse();
     let config = Config::from(args);
+
+    if config.ifaces.is_empty() {
+        protocol::emit(&protocol::state_fatal("no interfaces specified (--ifaces eth0,eth1)"));
+        std::process::exit(1);
+    }
 
     let redirect_list = load_list(&config.redirect_list_path, "redirect");
     if redirect_list.len() == 0 {
@@ -177,54 +133,88 @@ fn main() {
         bypass: bypass_list,
     };
 
-    let mut queue = match Queue::open() {
-        Ok(q) => q,
+    // Открываем raw socket на первом интерфейсе.
+    // На L2 bridge оба порта видят один и тот же трафик — достаточно слушать один.
+    // Ответ инжектим на тот же порт (обратно к клиенту).
+    let iface = &config.ifaces[0];
+    let sock = match rawsock::RawSocket::bind(iface) {
+        Ok(s) => s,
         Err(e) => {
             protocol::emit(&protocol::state_fatal(&format!(
-                "cannot open NFQUEUE: {:?}",
-                e
+                "cannot bind AF_PACKET on {}: {}",
+                iface, e
             )));
             std::process::exit(1);
         }
     };
 
-    if let Err(e) = queue.bind(config.queue_num) {
-        protocol::emit(&protocol::state_fatal(&format!(
-            "cannot bind NFQUEUE {}: {:?}",
-            config.queue_num, e
-        )));
-        std::process::exit(1);
-    }
-
     protocol::emit(&protocol::state_alive(env!("CARGO_PKG_VERSION")));
 
+    let mut buf = [0u8; BUF_SIZE];
     let mut last_stats = Instant::now();
 
     loop {
-        let mut msg = match queue.recv() {
-            Ok(msg) => msg,
+        let (len, addr) = match sock.recv(&mut buf) {
+            Ok(r) => r,
             Err(e) => {
-                eprintln!("recv error: {:?}", e);
+                eprintln!("recv error: {}", e);
                 continue;
             }
         };
 
-        STATS_TOTAL.fetch_add(1, Ordering::Relaxed);
-
-        let payload = msg.get_payload();
-        let verdict = process_packet(payload, &lists, &config);
-
-        match verdict {
-            PacketVerdict::Accept => {
-                msg.set_verdict(Verdict::Accept);
-            }
-            PacketVerdict::SpoofedResponse(spoofed_packet) => {
-                msg.set_payload(spoofed_packet);
-                msg.set_verdict(Verdict::Accept);
+        // Debug: логируем первые 20 пакетов
+        {
+            static DEBUG_COUNT: AtomicUsize = AtomicUsize::new(0);
+            let count = DEBUG_COUNT.fetch_add(1, Ordering::Relaxed);
+            if count < 20 {
+                let ethertype = if len >= 14 { u16::from_be_bytes([buf[12], buf[13]]) } else { 0 };
+                let mut extra = String::new();
+                if ethertype == 0x0800 && len > 14 + 23 {
+                    let ip_proto = buf[14 + 9];
+                    if ip_proto == 17 { // UDP
+                        let dst_port = u16::from_be_bytes([buf[14 + 22], buf[14 + 23]]);
+                        extra = format!(" UDP dst_port={}", dst_port);
+                    }
+                }
+                eprintln!("DEBUG[{}]: len={} pkttype={} etype=0x{:04x}{}", count, len, addr.sll_pkttype, ethertype, extra);
             }
         }
 
-        queue.verdict(msg).ok();
+        // sll_pkttype: PACKET_OUTGOING (4) — наши собственные пакеты, пропускаем
+        if addr.sll_pkttype == 4 {
+            continue;
+        }
+
+        // ETH_P_ALL: Ethernet frame. EtherType = IPv4 (0x0800).
+        if len < 14 {
+            continue;
+        }
+        let ethertype = u16::from_be_bytes([buf[12], buf[13]]);
+        if ethertype != 0x0800 {
+            continue;
+        }
+
+        // Пропускаем Ethernet header (14 байт)
+        let raw_ip = &buf[14..len];
+
+        if let Some(spoofed_ip) = process_packet(raw_ip, &lists, &config) {
+            // Собираем Ethernet frame: dst=client MAC, src=original dst MAC, ethertype=IPv4
+            let client_mac = &buf[6..12]; // src MAC из оригинального frame
+            let our_mac = &buf[0..6]; // dst MAC из оригинального frame (MAC "роутера"/DNS)
+
+            let mut frame = Vec::with_capacity(14 + spoofed_ip.len());
+            frame.extend_from_slice(client_mac); // dst = клиент
+            frame.extend_from_slice(our_mac); // src = "DNS сервер"
+            frame.extend_from_slice(&[0x08, 0x00]); // EtherType = IPv4
+            frame.extend_from_slice(&spoofed_ip);
+
+            let mut dst_mac = [0u8; 6];
+            dst_mac.copy_from_slice(client_mac);
+
+            if let Err(e) = sock.send(&frame, &dst_mac) {
+                eprintln!("send error: {}", e);
+            }
+        }
 
         if last_stats.elapsed().as_secs() >= STATS_INTERVAL_SECS {
             let total = STATS_TOTAL.load(Ordering::Relaxed);

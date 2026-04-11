@@ -7,6 +7,9 @@ pub enum NfqdnsError {
         path: String,
         source: std::io::Error,
     },
-    #[error("NFQUEUE {queue}: {reason}")]
-    QueueOpen { queue: u16, reason: String },
+    #[error("raw socket {iface}: {source}")]
+    RawSocket {
+        iface: String,
+        source: std::io::Error,
+    },
 }

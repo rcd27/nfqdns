@@ -4,24 +4,30 @@ use std::path::PathBuf;
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "nfqdns", about = "DNS traffic classifier for L2 bridge")]
+#[command(name = "nfqdns", about = "DNS traffic classifier for L2 bridge via AF_PACKET")]
 pub struct Args {
+    /// Bridge порты для перехвата DNS (через запятую: eth0,eth1)
+    #[arg(long, value_delimiter = ',')]
+    pub ifaces: Vec<String>,
+    /// IP для redirect (desync/zapret) доменов
     #[arg(long)]
     pub redirect_ip: Ipv4Addr,
+    /// Список доменов для redirect
     #[arg(long)]
     pub redirect_list: PathBuf,
+    /// IP для tunnel (sing-box) доменов
     #[arg(long)]
     pub tunnel_ip: Option<Ipv4Addr>,
+    /// Список доменов для tunnel
     #[arg(long)]
     pub tunnel_list: Option<PathBuf>,
+    /// Список доменов для bypass (без модификации)
     #[arg(long)]
     pub bypass_list: Option<PathBuf>,
-    #[arg(long, default_value = "100")]
-    pub queue_num: u16,
 }
 
 pub struct Config {
-    pub queue_num: u16,
+    pub ifaces: Vec<String>,
     pub redirect_ip: Ipv4Addr,
     pub tunnel_ip: Option<Ipv4Addr>,
     pub redirect_list_path: PathBuf,
@@ -32,7 +38,7 @@ pub struct Config {
 impl From<Args> for Config {
     fn from(args: Args) -> Self {
         Config {
-            queue_num: args.queue_num,
+            ifaces: args.ifaces,
             redirect_ip: args.redirect_ip,
             tunnel_ip: args.tunnel_ip,
             redirect_list_path: args.redirect_list,
@@ -50,15 +56,17 @@ mod tests {
     fn config_from_args() {
         let args = Args::try_parse_from([
             "nfqdns",
+            "--ifaces",
+            "eth0,eth1",
             "--redirect-ip",
-            "192.168.1.50",
+            "10.99.1.50",
             "--redirect-list",
             "/tmp/redirect.txt",
         ])
         .unwrap();
         let config = Config::from(args);
-        assert_eq!(config.redirect_ip, Ipv4Addr::new(192, 168, 1, 50));
-        assert_eq!(config.queue_num, 100);
+        assert_eq!(config.ifaces, vec!["eth0", "eth1"]);
+        assert_eq!(config.redirect_ip, Ipv4Addr::new(10, 99, 1, 50));
         assert!(config.tunnel_ip.is_none());
     }
 }
