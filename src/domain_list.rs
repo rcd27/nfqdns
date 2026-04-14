@@ -64,13 +64,13 @@ mod tests {
 
     #[test]
     fn load_tunnel_list() {
-        let list = DomainList::load(Path::new("testdata/redirect.txt")).unwrap();
+        let list = DomainList::load(Path::new("testdata/tunnel.txt")).unwrap();
         assert_eq!(list.len(), 4);
     }
 
     #[test]
     fn exact_match() {
-        let list = DomainList::load(Path::new("testdata/redirect.txt")).unwrap();
+        let list = DomainList::load(Path::new("testdata/tunnel.txt")).unwrap();
         assert!(list.contains("instagram.com"));
         assert!(list.contains("twitter.com"));
         assert!(!list.contains("youtube.com"));
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn suffix_match() {
-        let list = DomainList::load(Path::new("testdata/redirect.txt")).unwrap();
+        let list = DomainList::load(Path::new("testdata/tunnel.txt")).unwrap();
         assert!(list.contains("cdn.instagram.com"));
         assert!(list.contains("edge-chat.instagram.com"));
         assert!(!list.contains("scontent-ams2-1.cdninstagram.com"));
@@ -86,14 +86,14 @@ mod tests {
 
     #[test]
     fn case_insensitive() {
-        let list = DomainList::load(Path::new("testdata/redirect.txt")).unwrap();
+        let list = DomainList::load(Path::new("testdata/tunnel.txt")).unwrap();
         assert!(list.contains("Instagram.COM"));
         assert!(list.contains("CDN.INSTAGRAM.COM"));
     }
 
     #[test]
     fn comments_and_blanks_ignored() {
-        let list = DomainList::load(Path::new("testdata/redirect.txt")).unwrap();
+        let list = DomainList::load(Path::new("testdata/tunnel.txt")).unwrap();
         assert_eq!(list.len(), 4);
     }
 

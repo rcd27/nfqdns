@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "nfqdns", about = "DNS traffic classifier for L2 bridge via AF_PACKET")]
+#[command(
+    name = "nfqdns",
+    about = "DNS traffic classifier for L2 bridge via AF_PACKET"
+)]
 pub struct Args {
     /// Bridge порты для перехвата DNS (через запятую: eth0,eth1)
     #[arg(long, value_delimiter = ',')]
@@ -15,23 +18,19 @@ pub struct Args {
     /// Явный IP для spoofed ответов (вместо --spoof-iface)
     #[arg(long)]
     pub spoof_ip: Option<Ipv4Addr>,
-    /// Список доменов для redirect (desync/zapret)
-    #[arg(long)]
-    pub redirect_list: PathBuf,
     /// Список доменов для tunnel (sing-box)
     #[arg(long)]
-    pub tunnel_list: Option<PathBuf>,
-    /// Список доменов для bypass (без модификации)
+    pub tunnel_list: PathBuf,
+    /// Список доменов-исключений (банки, госуслуги — никогда не туннелировать)
     #[arg(long)]
-    pub bypass_list: Option<PathBuf>,
+    pub whitelist: Option<PathBuf>,
 }
 
 pub struct Config {
     pub ifaces: Vec<String>,
     pub spoof_ip: Ipv4Addr,
-    pub redirect_list_path: PathBuf,
-    pub tunnel_list_path: Option<PathBuf>,
-    pub bypass_list_path: Option<PathBuf>,
+    pub tunnel_list_path: PathBuf,
+    pub whitelist_path: Option<PathBuf>,
 }
 
 /// Получает IPv4 адрес интерфейса из /sys/class/net + ip addr
@@ -45,11 +44,7 @@ pub fn get_iface_ipv4(iface: &str) -> Option<Ipv4Addr> {
         let trimmed = line.trim();
         if trimmed.starts_with("inet ") {
             // "inet 192.168.1.93/24 ..."
-            let addr_str = trimmed
-                .split_whitespace()
-                .nth(1)?
-                .split('/')
-                .next()?;
+            let addr_str = trimmed.split_whitespace().nth(1)?.split('/').next()?;
             return addr_str.parse().ok();
         }
     }
@@ -61,9 +56,8 @@ impl Config {
         let spoof_ip = if let Some(ip) = args.spoof_ip {
             ip
         } else if let Some(ref iface) = args.spoof_iface {
-            get_iface_ipv4(iface).ok_or_else(|| {
-                format!("cannot get IPv4 from interface {}", iface)
-            })?
+            get_iface_ipv4(iface)
+                .ok_or_else(|| format!("cannot get IPv4 from interface {}", iface))?
         } else {
             return Err("either --spoof-ip or --spoof-iface required".into());
         };
@@ -71,9 +65,8 @@ impl Config {
         Ok(Config {
             ifaces: args.ifaces,
             spoof_ip,
-            redirect_list_path: args.redirect_list,
             tunnel_list_path: args.tunnel_list,
-            bypass_list_path: args.bypass_list,
+            whitelist_path: args.whitelist,
         })
     }
 }
@@ -86,9 +79,12 @@ mod tests {
     fn config_with_explicit_ip() {
         let args = Args::try_parse_from([
             "nfqdns",
-            "--ifaces", "eth0,eth1",
-            "--spoof-ip", "192.168.1.93",
-            "--redirect-list", "/tmp/redirect.txt",
+            "--ifaces",
+            "eth0,eth1",
+            "--spoof-ip",
+            "192.168.1.93",
+            "--tunnel-list",
+            "/tmp/tunnel.txt",
         ])
         .unwrap();
         let config = Config::from_args(args).unwrap();
@@ -100,8 +96,10 @@ mod tests {
     fn config_without_ip_or_iface_fails() {
         let args = Args::try_parse_from([
             "nfqdns",
-            "--ifaces", "eth0",
-            "--redirect-list", "/tmp/redirect.txt",
+            "--ifaces",
+            "eth0",
+            "--tunnel-list",
+            "/tmp/tunnel.txt",
         ])
         .unwrap();
         assert!(Config::from_args(args).is_err());

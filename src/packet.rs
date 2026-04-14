@@ -40,10 +40,7 @@ pub fn parse_dns_query(raw: &[u8]) -> Option<DnsPacketInfo> {
 
 /// Собирает spoofed DNS response пакет (IP/UDP, без Ethernet).
 /// src/dst IP и порты перевёрнуты относительно оригинала.
-pub fn build_spoofed_response(
-    original: &DnsPacketInfo,
-    dns_response: &[u8],
-) -> Vec<u8> {
+pub fn build_spoofed_response(original: &DnsPacketInfo, dns_response: &[u8]) -> Vec<u8> {
     let builder = PacketBuilder::ipv4(original.dst_ip, original.src_ip, 64)
         .udp(original.dst_port, original.src_port);
 

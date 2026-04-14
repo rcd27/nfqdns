@@ -39,17 +39,14 @@ pub struct SignalFields {
 #[serde(rename_all = "snake_case")]
 #[allow(dead_code)]
 pub enum RedirectAction {
-    Redirect,
     Tunnel,
-    Bypass,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GaugePayload {
     pub total: u64,
-    pub redirected: u64,
     pub tunneled: u64,
-    pub bypassed: u64,
+    pub whitelisted: u64,
     pub passed: u64,
 }
 
@@ -71,18 +68,11 @@ pub fn state_degraded(reason: &str) -> Payload {
     })
 }
 
-pub fn data_gauge(
-    total: u64,
-    redirected: u64,
-    tunneled: u64,
-    bypassed: u64,
-    passed: u64,
-) -> Payload {
+pub fn data_gauge(total: u64, tunneled: u64, whitelisted: u64, passed: u64) -> Payload {
     Payload::Data(DataPayload::Gauge(GaugePayload {
         total,
-        redirected,
         tunneled,
-        bypassed,
+        whitelisted,
         passed,
     }))
 }

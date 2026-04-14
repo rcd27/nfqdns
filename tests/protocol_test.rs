@@ -21,24 +21,13 @@ fn fatal_message_v2_format() {
 
 #[test]
 fn gauge_message_v2_with_tunneled() {
-    let payload = data_gauge(4582, 342, 15, 120, 4105);
+    let payload = data_gauge(4582, 15, 120, 4447);
     let json = serde_json::to_string(&payload).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed["type"], "data");
     assert_eq!(parsed["kind"], "gauge");
     assert_eq!(parsed["tunneled"], 15);
-}
-
-#[test]
-fn signal_redirect_v2_format() {
-    let payload = data_signal_redirect("instagram.com", RedirectAction::Redirect);
-    let json = serde_json::to_string(&payload).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["type"], "data");
-    assert_eq!(parsed["kind"], "signal");
-    assert_eq!(parsed["signal_type"], "DOMAIN_REDIRECTED");
-    assert_eq!(parsed["fields"]["domain"], "instagram.com");
-    assert_eq!(parsed["fields"]["action"], "redirect");
+    assert_eq!(parsed["whitelisted"], 120);
 }
 
 #[test]
@@ -46,6 +35,10 @@ fn signal_tunnel_action() {
     let payload = data_signal_redirect("discord.com", RedirectAction::Tunnel);
     let json = serde_json::to_string(&payload).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["type"], "data");
+    assert_eq!(parsed["kind"], "signal");
+    assert_eq!(parsed["signal_type"], "DOMAIN_REDIRECTED");
+    assert_eq!(parsed["fields"]["domain"], "discord.com");
     assert_eq!(parsed["fields"]["action"], "tunnel");
 }
 
@@ -55,8 +48,8 @@ fn all_messages_have_type_field() {
         state_alive("0.1.2"),
         state_fatal("error"),
         state_degraded("warning"),
-        data_gauge(100, 10, 5, 5, 80),
-        data_signal_redirect("example.com", RedirectAction::Redirect),
+        data_gauge(100, 5, 5, 90),
+        data_signal_redirect("example.com", RedirectAction::Tunnel),
     ];
     for payload in &messages {
         let json = serde_json::to_string(payload).unwrap();

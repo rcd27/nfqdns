@@ -17,9 +17,8 @@ use domain_list::DomainList;
 use protocol::RedirectAction;
 
 static STATS_TOTAL: AtomicUsize = AtomicUsize::new(0);
-static STATS_REDIRECT: AtomicUsize = AtomicUsize::new(0);
 static STATS_TUNNEL: AtomicUsize = AtomicUsize::new(0);
-static STATS_BYPASS: AtomicUsize = AtomicUsize::new(0);
+static STATS_WHITELIST: AtomicUsize = AtomicUsize::new(0);
 static STATS_PASS: AtomicUsize = AtomicUsize::new(0);
 
 const STATS_INTERVAL_SECS: u64 = 60;
@@ -27,36 +26,28 @@ const BUF_SIZE: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrafficCategory {
-    Redirect,
     Tunnel,
-    Bypass,
+    Whitelist,
     Pass,
 }
 
 pub struct DomainLists {
-    pub redirect: DomainList,
     pub tunnel: DomainList,
-    pub bypass: DomainList,
+    pub whitelist: DomainList,
 }
 
 fn classify_domain(domain: &str, lists: &DomainLists) -> TrafficCategory {
-    if lists.bypass.contains(domain) {
-        TrafficCategory::Bypass
+    if lists.whitelist.contains(domain) {
+        TrafficCategory::Whitelist
     } else if lists.tunnel.contains(domain) {
         TrafficCategory::Tunnel
-    } else if lists.redirect.contains(domain) {
-        TrafficCategory::Redirect
     } else {
         TrafficCategory::Pass
     }
 }
 
 /// Обрабатывает пойманный IP пакет. Возвращает spoofed response если домен в списке.
-fn process_packet(
-    raw_ip: &[u8],
-    lists: &DomainLists,
-    config: &Config,
-) -> Option<Vec<u8>> {
+fn process_packet(raw_ip: &[u8], lists: &DomainLists, config: &Config) -> Option<Vec<u8>> {
     let info = packet::parse_dns_query(raw_ip)?;
     let domain = dns::extract_domain(&info.dns_payload)?;
     let category = classify_domain(&domain, lists);
@@ -64,20 +55,17 @@ fn process_packet(
     STATS_TOTAL.fetch_add(1, Ordering::Relaxed);
 
     match category {
-        TrafficCategory::Redirect => {
-            STATS_REDIRECT.fetch_add(1, Ordering::Relaxed);
-            let dns_response = dns::craft_response(&info.dns_payload, config.spoof_ip)?;
-            protocol::emit(&protocol::data_signal_redirect(&domain, RedirectAction::Redirect));
-            Some(packet::build_spoofed_response(&info, &dns_response))
-        }
         TrafficCategory::Tunnel => {
             STATS_TUNNEL.fetch_add(1, Ordering::Relaxed);
             let dns_response = dns::craft_response(&info.dns_payload, config.spoof_ip)?;
-            protocol::emit(&protocol::data_signal_redirect(&domain, RedirectAction::Tunnel));
+            protocol::emit(&protocol::data_signal_redirect(
+                &domain,
+                RedirectAction::Tunnel,
+            ));
             Some(packet::build_spoofed_response(&info, &dns_response))
         }
-        TrafficCategory::Bypass => {
-            STATS_BYPASS.fetch_add(1, Ordering::Relaxed);
+        TrafficCategory::Whitelist => {
+            STATS_WHITELIST.fetch_add(1, Ordering::Relaxed);
             None
         }
         TrafficCategory::Pass => {
@@ -111,31 +99,27 @@ fn main() {
     };
 
     if config.ifaces.is_empty() {
-        protocol::emit(&protocol::state_fatal("no interfaces specified (--ifaces eth0,eth1)"));
+        protocol::emit(&protocol::state_fatal(
+            "no interfaces specified (--ifaces eth0,eth1)",
+        ));
         std::process::exit(1);
     }
 
-    let redirect_list = load_list(&config.redirect_list_path, "redirect");
-    if redirect_list.len() == 0 {
+    let tunnel_list = load_list(&config.tunnel_list_path, "tunnel");
+    if tunnel_list.len() == 0 {
         protocol::emit(&protocol::state_degraded(
-            "redirect list empty, working as passthrough",
+            "tunnel list empty, working as passthrough",
         ));
     }
 
-    let tunnel_list = match &config.tunnel_list_path {
-        Some(path) => load_list(path, "tunnel"),
-        None => DomainList::empty(),
-    };
-
-    let bypass_list = match &config.bypass_list_path {
-        Some(path) => load_list(path, "bypass"),
+    let whitelist = match &config.whitelist_path {
+        Some(path) => load_list(path, "whitelist"),
         None => DomainList::empty(),
     };
 
     let lists = DomainLists {
-        redirect: redirect_list,
         tunnel: tunnel_list,
-        bypass: bypass_list,
+        whitelist,
     };
 
     // AF_PACKET на первом bridge порту.
@@ -204,15 +188,13 @@ fn main() {
 
         if last_stats.elapsed().as_secs() >= STATS_INTERVAL_SECS {
             let total = STATS_TOTAL.load(Ordering::Relaxed);
-            let redirected = STATS_REDIRECT.load(Ordering::Relaxed);
             let tunneled = STATS_TUNNEL.load(Ordering::Relaxed);
-            let bypassed = STATS_BYPASS.load(Ordering::Relaxed);
+            let whitelisted = STATS_WHITELIST.load(Ordering::Relaxed);
             let passed = STATS_PASS.load(Ordering::Relaxed);
             protocol::emit(&protocol::data_gauge(
                 total as u64,
-                redirected as u64,
                 tunneled as u64,
-                bypassed as u64,
+                whitelisted as u64,
                 passed as u64,
             ));
             last_stats = Instant::now();
